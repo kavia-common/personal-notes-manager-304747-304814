@@ -62,10 +62,19 @@ function normalizeNote(raw, index = 0) {
       ? updatedAtRaw
       : nowIso();
 
+  const tagsRaw = safe.tags;
+  const tags = Array.isArray(tagsRaw)
+    ? tagsRaw.map((t) => String(t ?? "").trim()).filter(Boolean)
+    : String(tagsRaw ?? "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+
   return {
     id,
     title: String(safe.title ?? "").trim() || "Untitled note",
     body: String(safe.body ?? ""),
+    tags,
     createdAt,
     updatedAt
   };
@@ -123,6 +132,17 @@ function assertNotesArrayShape(value) {
     if (n.body !== undefined && typeof n.body !== "string") {
       throw new Error(`Invalid note at index ${i}: body must be a string.`);
     }
+    if (n.tags !== undefined && !Array.isArray(n.tags) && typeof n.tags !== "string") {
+      throw new Error(`Invalid note at index ${i}: tags must be an array or a string.`);
+    }
+    if (Array.isArray(n.tags)) {
+      for (let j = 0; j < n.tags.length; j += 1) {
+        const t = n.tags[j];
+        if (typeof t !== "string" && typeof t !== "number") {
+          throw new Error(`Invalid note at index ${i}: tags[${j}] must be string/number.`);
+        }
+      }
+    }
     if (n.createdAt !== undefined && typeof n.createdAt !== "string") {
       throw new Error(`Invalid note at index ${i}: createdAt must be a string.`);
     }
@@ -135,14 +155,23 @@ function assertNotesArrayShape(value) {
 /** PUBLIC_INTERFACE
  * Creates a new note and returns it.
  */
-export function createNote({ title, body }) {
+export function createNote({ title, body, tags }) {
   /** This is a public function. */
   const notes = loadAll();
   const t = nowIso();
+
+  const normalizedTags = Array.isArray(tags)
+    ? tags.map((x) => String(x ?? "").trim()).filter(Boolean)
+    : String(tags ?? "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+
   const note = {
     id: uid(),
     title: (title ?? "").trim() || "Untitled note",
     body: body ?? "",
+    tags: normalizedTags,
     createdAt: t,
     updatedAt: t
   };
@@ -173,6 +202,16 @@ export function updateNote(id, patch) {
 
   const current = normalizeNote(notes[idx]);
 
+  const normalizedTags =
+    patch?.tags !== undefined
+      ? Array.isArray(patch.tags)
+        ? patch.tags.map((x) => String(x ?? "").trim()).filter(Boolean)
+        : String(patch.tags ?? "")
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean)
+      : current.tags;
+
   // Persist ISO strings for timestamps.
   // - createdAt never changes once set.
   // - updatedAt always refreshes on update flows.
@@ -181,6 +220,7 @@ export function updateNote(id, patch) {
     ...(patch ?? {}),
     title: patch?.title !== undefined ? (patch.title ?? "").trim() || "Untitled note" : current.title,
     body: patch?.body !== undefined ? patch.body ?? "" : current.body,
+    tags: normalizedTags,
     createdAt: current.createdAt,
     updatedAt: nowIso()
   };

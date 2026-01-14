@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useMemo, useRef, useState } from "react";
-import { countWords, formatRelativeDate, snippet } from "./utils";
+import { countWords, formatRelativeDate, formatTags, normalizeTags, snippet } from "./utils";
 
 const ITEM_HEIGHT = 112; // px, approx height including margin (simple fixed-height virtualization)
 const OVERSCAN = 6;
@@ -8,6 +8,9 @@ const OVERSCAN = 6;
  * Memoized note row to prevent re-rendering every row when selection changes.
  */
 const NoteRow = memo(function NoteRow({ note, isSelected, onSelect }) {
+  const tagsLabel = formatTags(note.tags);
+  const tagsCount = normalizeTags(note.tags).length;
+
   return (
     <button
       type="button"
@@ -19,6 +22,13 @@ const NoteRow = memo(function NoteRow({ note, isSelected, onSelect }) {
       tabIndex={isSelected ? 0 : -1}
     >
       <div className="noteTitle">{note.title || "Untitled note"}</div>
+
+      {tagsCount > 0 && (
+        <div className="noteTags" aria-label={`Tags: ${tagsLabel}`}>
+          {tagsLabel}
+        </div>
+      )}
+
       <div className="noteSnippet">{snippet(note.body)}</div>
       <div className="noteMeta">
         <span title={`Updated ${note.updatedAt}`}>{formatRelativeDate(note.updatedAt)}</span>

@@ -9,11 +9,13 @@ export function Topbar({
   filteredCount,
   activeNav,
   onCreate,
+  onDuplicate,
   onSave,
   onDelete,
   onOpenSettings,
   canSave,
   canDelete,
+  canDuplicate,
   saveStatus,
   searchInputRef
 }) {
@@ -79,6 +81,18 @@ export function Topbar({
 
         {activeNav === "notes" && (
           <>
+            <button
+              type="button"
+              className="btn btnGhost"
+              onClick={onDuplicate}
+              disabled={!canDuplicate}
+              aria-disabled={!canDuplicate}
+              title={!canDuplicate ? "Select a note to duplicate" : "Duplicate note"}
+              aria-label={!canDuplicate ? "Duplicate (disabled)" : "Duplicate note"}
+            >
+              Duplicate
+            </button>
+
             <button
               type="button"
               className="btn btnGhost"

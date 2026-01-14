@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { renderMarkdownToHtml } from "../markdown";
-import { formatDateTime, formatRelativeDate } from "./utils";
+import { formatDateTime, formatRelativeDate, formatTags, normalizeTags } from "./utils";
 
 /** PUBLIC_INTERFACE
  * Editor panel for a selected note, including markdown preview.
@@ -9,6 +9,8 @@ export function Editor({
   selectedNote,
   draftTitle,
   setDraftTitle,
+  draftTags,
+  setDraftTags,
   draftBody,
   setDraftBody,
   isDirty,
@@ -43,14 +45,35 @@ export function Editor({
       ) : (
         <>
           <div className="panelHeader">
-            <div>
-              <div className="panelTitle">Editor</div>
-              <div className="panelSub">
-                <span title={`Created ${selectedNote.createdAt}`}>Created {formatDateTime(selectedNote.createdAt)}</span>
-                {" · "}
-                <span title={`Updated ${selectedNote.updatedAt}`}>Updated {formatRelativeDate(selectedNote.updatedAt)}</span>
+            <div className="panelHeaderStack">
+              <div>
+                <div className="panelTitle">Editor</div>
+                <div className="panelSub">
+                  <span title={`Created ${selectedNote.createdAt}`}>Created {formatDateTime(selectedNote.createdAt)}</span>
+                  {" · "}
+                  <span title={`Updated ${selectedNote.updatedAt}`}>Updated {formatRelativeDate(selectedNote.updatedAt)}</span>
+                </div>
+              </div>
+
+              <div className="tagsRow" aria-label="Tags">
+                {normalizeTags(draftTags).slice(0, 6).map((t) => (
+                  <span key={t} className="tagChip">
+                    {t}
+                  </span>
+                ))}
+                <input
+                  className="tagInputInline"
+                  value={formatTags(draftTags)}
+                  onChange={(e) => {
+                    setDraftTags(e.target.value);
+                    setIsDirty(true);
+                  }}
+                  placeholder="Tags (comma-separated)…"
+                  aria-label="Edit tags (comma-separated)"
+                />
               </div>
             </div>
+
             <div className="actions">
               <span
                 className={statusClass}

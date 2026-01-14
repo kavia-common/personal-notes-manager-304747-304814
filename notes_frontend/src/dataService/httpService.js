@@ -2,8 +2,8 @@
  * HttpService: uses fetch against `${REACT_APP_API_BASE}/notes`.
  * Contract assumed:
  * - GET /notes -> array of notes
- * - POST /notes with {title, body} -> created note
- * - PUT /notes/:id with patch {title?, body?} -> updated note
+ * - POST /notes with {title, body, tags?} -> created note
+ * - PUT /notes/:id with patch {title?, body?, tags?} -> updated note
  * - DELETE /notes/:id -> 204/200
  *
  * Notes are expected to include {id,title,body,createdAt,updatedAt}.
@@ -38,10 +38,21 @@ async function readErrorBody(res) {
 /** PRIVATE */
 function normalizeRemoteNote(n) {
   const now = new Date().toISOString();
+
+  // tags can be an array (preferred) or a comma-separated string depending on backend implementation.
+  const rawTags = n?.tags;
+  const tags = Array.isArray(rawTags)
+    ? rawTags.map((t) => String(t ?? "").trim()).filter(Boolean)
+    : String(rawTags ?? "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+
   return {
     id: String(n?.id ?? ""),
     title: String(n?.title ?? "Untitled note"),
     body: String(n?.body ?? ""),
+    tags,
     createdAt: String(n?.createdAt ?? now),
     updatedAt: String(n?.updatedAt ?? n?.createdAt ?? now)
   };
@@ -107,7 +118,11 @@ export function createHttpService({ apiBase }) {
     async createNote(note) {
       const created = await fetchJson("/notes", {
         method: "POST",
-        body: JSON.stringify({ title: note?.title ?? "Untitled note", body: note?.body ?? "" })
+        body: JSON.stringify({
+          title: note?.title ?? "Untitled note",
+          body: note?.body ?? "",
+          tags: Array.isArray(note?.tags) ? note.tags : undefined
+        })
       });
       const normalized = normalizeRemoteNote(created);
       assertOkId(normalized);
@@ -115,9 +130,10 @@ export function createHttpService({ apiBase }) {
     },
 
     async updateNote(id, patch) {
+      const safePatch = patch ?? {};
       const updated = await fetchJson(`/notes/${encodeURIComponent(id)}`, {
         method: "PUT",
-        body: JSON.stringify(patch ?? {})
+        body: JSON.stringify(safePatch)
       });
       const normalized = normalizeRemoteNote({ ...(updated ?? {}), id: updated?.id ?? id });
       assertOkId(normalized);

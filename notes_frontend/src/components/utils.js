@@ -81,6 +81,39 @@ export function countWords(text) {
 }
 
 /** PRIVATE
+ * Normalize a tags value into an array of trimmed unique-ish strings.
+ * Accepts array or comma-separated string.
+ */
+export function normalizeTags(input) {
+  const raw = input ?? [];
+  const arr = Array.isArray(raw)
+    ? raw
+    : String(raw)
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+
+  // Keep order stable while removing duplicates (case-insensitive).
+  const seen = new Set();
+  const out = [];
+  for (const t of arr) {
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
+}
+
+/** PRIVATE
+ * Render tags as a compact comma-separated label.
+ */
+export function formatTags(tags) {
+  const t = normalizeTags(tags);
+  return t.join(", ");
+}
+
+/** PRIVATE
  * Render a small icon box used in the sidebar nav.
  */
 export function iconBox(text) {

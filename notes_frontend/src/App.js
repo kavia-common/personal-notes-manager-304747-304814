@@ -23,6 +23,7 @@ function App() {
   const [selectedId, setSelectedId] = useState(null);
 
   const [draftTitle, setDraftTitle] = useState("");
+  const [draftTags, setDraftTags] = useState("");
   const [draftBody, setDraftBody] = useState("");
 
   // Dirty state tracks whether current draft differs from the last loaded/saved note content.
@@ -53,12 +54,48 @@ function App() {
 
   // Search should operate on the in-memory notes list (works for both HTTP and local service modes).
   const filteredNotes = useMemo(() => {
-    const q = String(query ?? "").trim().toLowerCase();
+    const qRaw = String(query ?? "").trim();
+    const q = qRaw.toLowerCase();
     if (!q) return notes;
+
+    // Support simple tag filter tokens:
+    // - "tag:work" or "#work" (can appear multiple times)
+    // Any remaining text is treated as a free-text search over title/body/tags.
+    const tokens = qRaw
+      .split(/\s+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+    const tagTokens = [];
+    const textTokens = [];
+
+    for (const token of tokens) {
+      const lower = token.toLowerCase();
+      if (lower.startsWith("tag:") && lower.length > 4) {
+        tagTokens.push(lower.slice(4));
+      } else if (lower.startsWith("#") && lower.length > 1) {
+        tagTokens.push(lower.slice(1));
+      } else {
+        textTokens.push(lower);
+      }
+    }
+
+    const textQuery = textTokens.join(" ").trim();
+
     return notes.filter((n) => {
-      const t = String(n.title ?? "").toLowerCase();
-      const b = String(n.body ?? "").toLowerCase();
-      return t.includes(q) || b.includes(q);
+      const title = String(n.title ?? "").toLowerCase();
+      const body = String(n.body ?? "").toLowerCase();
+      const tags = Array.isArray(n.tags) ? n.tags : String(n.tags ?? "").split(",");
+      const tagsJoined = tags.map((t) => String(t ?? "").trim().toLowerCase()).filter(Boolean).join(" ");
+
+      const textOk = !textQuery || title.includes(textQuery) || body.includes(textQuery) || tagsJoined.includes(textQuery);
+
+      if (!textOk) return false;
+
+      if (tagTokens.length === 0) return true;
+
+      // All tag tokens must match (AND semantics).
+      return tagTokens.every((wanted) => tagsJoined.includes(wanted));
     });
   }, [query, notes]);
 
@@ -74,12 +111,14 @@ function App() {
 
     if (!selectedNote) {
       setDraftTitle("");
+      setDraftTags("");
       setDraftBody("");
       setIsDirty(false);
       setSaveStatus("hidden");
       return;
     }
     setDraftTitle(selectedNote.title ?? "");
+    setDraftTags(Array.isArray(selectedNote.tags) ? selectedNote.tags.join(", ") : String(selectedNote.tags ?? ""));
     setDraftBody(selectedNote.body ?? "");
     setIsDirty(false);
     setSaveStatus("saved");
@@ -224,7 +263,7 @@ function App() {
     lastFocusRef.current = document.activeElement;
 
     try {
-      const note = await createNote({ title: "Untitled note", body: "" });
+      const note = await createNote({ title: "Untitled note", body: "", tags: [] });
       setNotes((prev) => [note, ...prev].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))));
       setSelectedId(note.id);
 
@@ -240,7 +279,7 @@ function App() {
     } catch (e) {
       // Fallback to local create if HTTP fails at runtime.
       try {
-        const note = createLocalNote({ title: "Untitled note", body: "" });
+        const note = createLocalNote({ title: "Untitled note", body: "", tags: [] });
         setNotes(listLocalNotes());
         setSelectedId(note.id);
         setBackendMode(false);
@@ -280,7 +319,7 @@ function App() {
     };
     // We intentionally watch the draft values so autosave triggers on edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftTitle, draftBody, isDirty, selectedNote?.id]);
+  }, [draftTitle, draftTags, draftBody, isDirty, selectedNote?.id]);
 
   const handleSave = useCallback(
     async (options = {}) => {
@@ -291,6 +330,7 @@ function App() {
       // Capture the note id and the draft snapshot at the moment save begins.
       const noteIdAtStart = selectedNote.id;
       const titleAtStart = draftTitle;
+      const tagsAtStart = draftTags;
       const bodyAtStart = draftBody;
 
       // If an autosave is about to run, cancel that timer; manual save should win.
@@ -299,7 +339,7 @@ function App() {
       setSaveStatus("saving");
 
       try {
-        const nextNote = await updateNote(noteIdAtStart, { title: titleAtStart, body: bodyAtStart });
+        const nextNote = await updateNote(noteIdAtStart, { title: titleAtStart, body: bodyAtStart, tags: tagsAtStart });
 
         setNotes((prev) =>
           [nextNote, ...prev.filter((n) => n.id !== noteIdAtStart)].sort((a, b) =>
@@ -309,7 +349,10 @@ function App() {
 
         // Avoid clearing dirty state if the user typed more while we were saving.
         const stillSameDraft =
-          titleAtStart === draftTitle && bodyAtStart === draftBody && selectedNote?.id === noteIdAtStart;
+          titleAtStart === draftTitle &&
+          tagsAtStart === draftTags &&
+          bodyAtStart === draftBody &&
+          selectedNote?.id === noteIdAtStart;
         if (stillSameDraft) setIsDirty(false);
 
         setSaveStatus(stillSameDraft ? "saved" : "dirty");
@@ -324,13 +367,16 @@ function App() {
       } catch (e) {
         // Fallback to local update if HTTP fails at runtime.
         try {
-          const updated = notesStoreUpdateFallback(noteIdAtStart, { title: titleAtStart, body: bodyAtStart });
+          const updated = notesStoreUpdateFallback(noteIdAtStart, { title: titleAtStart, body: bodyAtStart, tags: tagsAtStart });
           setNotes(listLocalNotes());
           setBackendMode(false);
           setBackendStatus("Local mode (fallback after HTTP error)");
 
           const stillSameDraft =
-            titleAtStart === draftTitle && bodyAtStart === draftBody && selectedNote?.id === noteIdAtStart;
+            titleAtStart === draftTitle &&
+            tagsAtStart === draftTags &&
+            bodyAtStart === draftBody &&
+            selectedNote?.id === noteIdAtStart;
           if (stillSameDraft) setIsDirty(false);
           setSaveStatus(stillSameDraft ? "saved" : "dirty");
 
@@ -358,6 +404,63 @@ function App() {
     },
     [backendMode, draftBody, draftTitle, selectedNote]
   );
+
+  const handleDuplicate = useCallback(async () => {
+    if (!selectedNote) return;
+
+    if (isDirty) {
+      const ok = window.confirm(
+        "You have unsaved changes in the editor. Duplicate uses the last saved version of the note. Continue?"
+      );
+      if (!ok) return;
+    }
+
+    lastFocusRef.current = document.activeElement;
+
+    const baseTitle = String(selectedNote.title ?? "Untitled note");
+    const duplicatedTitle = baseTitle.trim() ? `${baseTitle} (copy)` : "Untitled note (copy)";
+
+    try {
+      const note = await createNote({
+        title: duplicatedTitle,
+        body: selectedNote.body ?? "",
+        tags: Array.isArray(selectedNote.tags) ? selectedNote.tags : String(selectedNote.tags ?? "")
+      });
+
+      setNotes((prev) => [note, ...prev].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))));
+      setSelectedId(note.id);
+
+      notify({
+        type: "info",
+        title: "Duplicated",
+        msg: backendMode ? "Note duplicated (backend)." : "Note duplicated."
+      });
+    } catch (e) {
+      // Fallback to local create if HTTP fails at runtime.
+      try {
+        const note = createLocalNote({
+          title: duplicatedTitle,
+          body: selectedNote.body ?? "",
+          tags: Array.isArray(selectedNote.tags) ? selectedNote.tags : String(selectedNote.tags ?? "")
+        });
+        setNotes(listLocalNotes());
+        setSelectedId(note.id);
+        setBackendMode(false);
+        setBackendStatus("Local mode (fallback after HTTP error)");
+        notify({
+          type: "error",
+          title: "Backend error",
+          msg: `Duplicated locally instead. ${e instanceof Error ? e.message : ""}`.trim()
+        });
+      } catch (localErr) {
+        notify({
+          type: "error",
+          title: "Duplicate failed",
+          msg: `${e instanceof Error ? e.message : String(e)} ${localErr instanceof Error ? localErr.message : ""}`.trim()
+        });
+      }
+    }
+  }, [backendMode, isDirty, selectedNote]);
 
   const handleDelete = useCallback(async () => {
     if (!selectedNote) return;
@@ -540,6 +643,7 @@ function App() {
             filteredCount={filteredNotes.length}
             activeNav={activeNav}
             onCreate={handleCreate}
+            onDuplicate={handleDuplicate}
             onSave={handleSave}
             onDelete={handleDelete}
             onOpenSettings={() => {
@@ -548,6 +652,7 @@ function App() {
             }}
             canSave={Boolean(selectedNote) && isDirty}
             canDelete={Boolean(selectedNote)}
+            canDuplicate={Boolean(selectedNote)}
             saveStatus={Boolean(selectedNote) ? saveStatus : "hidden"}
             searchInputRef={searchInputRef}
           />
@@ -593,6 +698,8 @@ function App() {
                 selectedNote={selectedNote}
                 draftTitle={draftTitle}
                 setDraftTitle={setDraftTitle}
+                draftTags={draftTags}
+                setDraftTags={setDraftTags}
                 draftBody={draftBody}
                 setDraftBody={setDraftBody}
                 isDirty={isDirty}
