@@ -1,5 +1,5 @@
 import React from "react";
-import { countWords, formatShortDate, snippet } from "./utils";
+import { countWords, formatRelativeDate, snippet } from "./utils";
 
 /** PUBLIC_INTERFACE
  * Notes list panel with selectable notes and empty state.
@@ -51,7 +51,7 @@ export function NotesList({
               <div className="noteTitle">{n.title || "Untitled note"}</div>
               <div className="noteSnippet">{snippet(n.body)}</div>
               <div className="noteMeta">
-                <span>{formatShortDate(n.updatedAt)}</span>
+                <span title={`Updated ${n.updatedAt}`}>{formatRelativeDate(n.updatedAt)}</span>
                 <span>{countWords(n.body)} words</span>
               </div>
             </button>

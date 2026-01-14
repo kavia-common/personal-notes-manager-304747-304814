@@ -38,13 +38,57 @@ function defaultNotes() {
   ];
 }
 
+/**
+ * Normalize a note loaded from storage to ensure required fields exist and are valid types.
+ * This also serves as a lightweight migration path from older stored shapes.
+ */
+function normalizeNote(raw, index = 0) {
+  const safe = raw && typeof raw === "object" ? raw : {};
+  const id = String(safe.id ?? "") || uid();
+
+  const createdAtRaw = safe.createdAt;
+  const updatedAtRaw = safe.updatedAt;
+
+  // If timestamps are missing (older storage), synthesize stable-ish ISO values.
+  // We prefer "now" for updatedAt so sorting behaves intuitively after migration.
+  const createdAt =
+    typeof createdAtRaw === "string" && createdAtRaw.trim()
+      ? createdAtRaw
+      : // Slightly offset to make multiple migrated notes stable and avoid same-timestamp ties.
+        new Date(Date.now() - index).toISOString();
+
+  const updatedAt =
+    typeof updatedAtRaw === "string" && updatedAtRaw.trim()
+      ? updatedAtRaw
+      : nowIso();
+
+  return {
+    id,
+    title: String(safe.title ?? "").trim() || "Untitled note",
+    body: String(safe.body ?? ""),
+    createdAt,
+    updatedAt
+  };
+}
+
 function loadAll() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultNotes();
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return defaultNotes();
-    return parsed;
+
+    const normalized = parsed.map((n, i) => normalizeNote(n, i));
+
+    // If we had to normalize (migration), persist back so future loads are consistent.
+    // This is best-effort and won't throw (we do not want reads to fail due to writes).
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+    } catch {
+      // ignore
+    }
+
+    return normalized;
   } catch {
     return defaultNotes();
   }
@@ -96,15 +140,21 @@ export function listNotes() {
 export function updateNote(id, patch) {
   /** This is a public function. */
   const notes = loadAll();
-  const idx = notes.findIndex(n => n.id === id);
+  const idx = notes.findIndex((n) => n.id === id);
   if (idx === -1) return null;
 
-  const current = notes[idx];
+  const current = normalizeNote(notes[idx]);
+
+  // Persist ISO strings for timestamps.
+  // - createdAt never changes once set.
+  // - updatedAt always refreshes on update flows.
   const updated = {
     ...current,
     ...(patch ?? {}),
-    title: patch?.title !== undefined ? (patch.title ?? "").trim() || "Untitled note" : current.title,
+    title:
+      patch?.title !== undefined ? (patch.title ?? "").trim() || "Untitled note" : current.title,
     body: patch?.body !== undefined ? patch.body ?? "" : current.body,
+    createdAt: current.createdAt,
     updatedAt: nowIso()
   };
 
@@ -121,7 +171,7 @@ export function updateNote(id, patch) {
 export function deleteNote(id) {
   /** This is a public function. */
   const notes = loadAll();
-  const next = notes.filter(n => n.id !== id);
+  const next = notes.filter((n) => n.id !== id);
   if (next.length === notes.length) return false;
   const res = saveAll(next);
   if (!res.ok) throw res.error;
@@ -136,7 +186,7 @@ export function searchNotes(query) {
   const q = String(query ?? "").trim().toLowerCase();
   const notes = listNotes();
   if (!q) return notes;
-  return notes.filter(n => {
+  return notes.filter((n) => {
     const t = String(n.title ?? "").toLowerCase();
     const b = String(n.body ?? "").toLowerCase();
     return t.includes(q) || b.includes(q);

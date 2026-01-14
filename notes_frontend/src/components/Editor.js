@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { renderMarkdownToHtml } from "../markdown";
-import { formatShortDate } from "./utils";
+import { formatDateTime, formatRelativeDate } from "./utils";
 
 /** PUBLIC_INTERFACE
  * Editor panel for a selected note, including markdown preview.
@@ -45,7 +45,11 @@ export function Editor({
           <div className="panelHeader">
             <div>
               <div className="panelTitle">Editor</div>
-              <div className="panelSub">Updated {formatShortDate(selectedNote.updatedAt)}</div>
+              <div className="panelSub">
+                <span title={`Created ${selectedNote.createdAt}`}>Created {formatDateTime(selectedNote.createdAt)}</span>
+                {" · "}
+                <span title={`Updated ${selectedNote.updatedAt}`}>Updated {formatRelativeDate(selectedNote.updatedAt)}</span>
+              </div>
             </div>
             <div className="actions">
               <span
