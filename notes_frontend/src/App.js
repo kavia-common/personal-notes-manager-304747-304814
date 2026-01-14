@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { hasBackendConfigured, getApiBaseUrl } from "./env";
 import {
@@ -59,6 +59,10 @@ function App() {
   );
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Focus management refs
+  const searchInputRef = useRef(null);
+  const lastFocusRef = useRef(null);
 
   const selectedNote = useMemo(() => notes.find((n) => n.id === selectedId) ?? null, [notes, selectedId]);
 
@@ -145,6 +149,17 @@ function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 3200);
   }
 
+  const focusSearch = useCallback(() => {
+    const el = searchInputRef.current || document.getElementById("notes-search");
+    if (!el) return;
+    try {
+      el.focus();
+      el.select?.();
+    } catch {
+      // ignore
+    }
+  }, []);
+
   // Keyboard shortcuts:
   // - Ctrl/Cmd+N: New note
   // - Ctrl/Cmd+S: Save (prevents browser "Save page" dialog)
@@ -193,36 +208,41 @@ function App() {
         if (isTypingInField(e.target)) return;
 
         e.preventDefault();
-        const search = document.getElementById("notes-search");
-        if (search) {
-          search.focus();
-          try {
-            search.select?.();
-          } catch {
-            // ignore
-          }
-        }
+        focusSearch();
+      }
+
+      // Ctrl/Cmd+, : Open settings (common app shortcut)
+      if (key === ",") {
+        e.preventDefault();
+        lastFocusRef.current = document.activeElement;
+        setSettingsOpen(true);
       }
     }
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // Depend on current state so shortcuts behave with latest selection/dirty state.
-  }, [selectedNote, isDirty, handleCreate, handleSave]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedNote, isDirty, handleCreate, handleSave, focusSearch]);
 
-  function selectNote(id) {
-    if (isDirty) {
-      const ok = window.confirm("You have unsaved changes. Discard them and switch notes?");
-      if (!ok) return;
-    }
-    setSelectedId(id);
-  }
+  const selectNote = useCallback(
+    (id) => {
+      if (isDirty) {
+        const ok = window.confirm("You have unsaved changes. Discard them and switch notes?");
+        if (!ok) return;
+      }
+      setSelectedId(id);
+    },
+    [isDirty]
+  );
 
-  async function handleCreate() {
+  const handleCreate = useCallback(async () => {
     if (isDirty) {
       const ok = window.confirm("You have unsaved changes. Discard them and create a new note?");
       if (!ok) return;
     }
+
+    // Track the currently focused element so we can return focus to something sensible if needed.
+    lastFocusRef.current = document.activeElement;
 
     if (backendMode) {
       // Best-effort: attempt backend create.
@@ -238,9 +258,14 @@ function App() {
           createdAt: String(created.createdAt ?? new Date().toISOString()),
           updatedAt: String(created.updatedAt ?? created.createdAt ?? new Date().toISOString())
         };
-        const next = [note, ...notes];
-        setNotes(next);
+        setNotes((prev) => [note, ...prev]);
         setSelectedId(note.id);
+
+        // Focus editor title after creating.
+        window.setTimeout(() => {
+          document.querySelector('input[aria-label="Note title"]')?.focus?.();
+        }, 0);
+
         notify({ type: "info", title: "Created", msg: "New note created (backend)." });
         return;
       } catch {
@@ -254,6 +279,11 @@ function App() {
       const note = createNote({ title: "Untitled note", body: "" });
       setNotes(listNotes());
       setSelectedId(note.id);
+
+      window.setTimeout(() => {
+        document.querySelector('input[aria-label="Note title"]')?.focus?.();
+      }, 0);
+
       notify({ type: "info", title: "Created", msg: "New note created." });
     } catch (e) {
       notify({
@@ -262,7 +292,7 @@ function App() {
         msg: `Could not create note. ${e instanceof Error ? e.message : ""}`.trim()
       });
     }
-  }
+  }, [backendMode, isDirty, notify, notes]);
 
   // Debounced autosave: when dirty drafts change, schedule a save after a short pause.
   useEffect(() => {
@@ -286,91 +316,105 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftTitle, draftBody, isDirty, selectedNote?.id]);
 
-  async function handleSave(options = {}) {
-    if (!selectedNote) return;
+  const handleSave = useCallback(
+    async (options = {}) => {
+      if (!selectedNote) return;
 
-    const { silent = false } = options;
+      const { silent = false } = options;
 
-    // Capture the note id and the draft snapshot at the moment save begins.
-    const noteIdAtStart = selectedNote.id;
-    const titleAtStart = draftTitle;
-    const bodyAtStart = draftBody;
+      // Capture the note id and the draft snapshot at the moment save begins.
+      const noteIdAtStart = selectedNote.id;
+      const titleAtStart = draftTitle;
+      const bodyAtStart = draftBody;
 
-    // If an autosave is about to run, cancel that timer; manual save should win.
-    if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
+      // If an autosave is about to run, cancel that timer; manual save should win.
+      if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
 
-    setSaveStatus("saving");
+      setSaveStatus("saving");
 
-    if (backendMode) {
+      if (backendMode) {
+        try {
+          const updated = await backendFetchJson(`/notes/${encodeURIComponent(noteIdAtStart)}`, {
+            method: "PUT",
+            body: JSON.stringify({ title: titleAtStart, body: bodyAtStart })
+          });
+
+          const nextNote = {
+            id: String(updated.id ?? noteIdAtStart),
+            title: String(updated.title ?? titleAtStart ?? "Untitled note"),
+            body: String(updated.body ?? bodyAtStart ?? ""),
+            createdAt: String(updated.createdAt ?? selectedNote.createdAt ?? new Date().toISOString()),
+            updatedAt: String(updated.updatedAt ?? new Date().toISOString())
+          };
+
+          setNotes((prev) =>
+            [nextNote, ...prev.filter((n) => n.id !== noteIdAtStart)].sort((a, b) =>
+              String(b.updatedAt).localeCompare(String(a.updatedAt))
+            )
+          );
+
+          // Avoid clearing dirty state if the user typed more while we were saving.
+          const stillSameDraft =
+            titleAtStart === draftTitle && bodyAtStart === draftBody && selectedNote?.id === noteIdAtStart;
+          if (stillSameDraft) setIsDirty(false);
+
+          setSaveStatus(stillSameDraft ? "saved" : "dirty");
+
+          if (!silent) notify({ type: "info", title: "Saved", msg: "Changes saved (backend)." });
+          return;
+        } catch {
+          setBackendMode(false);
+          setBackendStatus("Local mode (backend unavailable)");
+          if (!silent) notify({ type: "error", title: "Backend unavailable", msg: "Saving locally instead." });
+        }
+      }
+
       try {
-        const updated = await backendFetchJson(`/notes/${encodeURIComponent(noteIdAtStart)}`, {
-          method: "PUT",
-          body: JSON.stringify({ title: titleAtStart, body: bodyAtStart })
-        });
+        updateNote(noteIdAtStart, { title: titleAtStart, body: bodyAtStart });
+        setNotes(listNotes());
 
-        const nextNote = {
-          id: String(updated.id ?? noteIdAtStart),
-          title: String(updated.title ?? titleAtStart ?? "Untitled note"),
-          body: String(updated.body ?? bodyAtStart ?? ""),
-          createdAt: String(updated.createdAt ?? selectedNote.createdAt ?? new Date().toISOString()),
-          updatedAt: String(updated.updatedAt ?? new Date().toISOString())
-        };
-
-        setNotes((prev) =>
-          [nextNote, ...prev.filter((n) => n.id !== noteIdAtStart)].sort((a, b) =>
-            String(b.updatedAt).localeCompare(String(a.updatedAt))
-          )
-        );
-
-        // Avoid clearing dirty state if the user typed more while we were saving.
-        const stillSameDraft = titleAtStart === draftTitle && bodyAtStart === draftBody && selectedNote?.id === noteIdAtStart;
+        // Same "did draft change during save?" protection for local saves.
+        const stillSameDraft =
+          titleAtStart === draftTitle && bodyAtStart === draftBody && selectedNote?.id === noteIdAtStart;
         if (stillSameDraft) setIsDirty(false);
-
         setSaveStatus(stillSameDraft ? "saved" : "dirty");
 
-        if (!silent) notify({ type: "info", title: "Saved", msg: "Changes saved (backend)." });
-        return;
-      } catch {
-        setBackendMode(false);
-        setBackendStatus("Local mode (backend unavailable)");
-        if (!silent) notify({ type: "error", title: "Backend unavailable", msg: "Saving locally instead." });
+        if (!silent) notify({ type: "info", title: "Saved", msg: "Changes saved." });
+      } catch (e) {
+        setSaveStatus("dirty");
+        // If autosave fails silently, we still want a subtle signal. Keep it silent.
+        if (!silent) {
+          notify({
+            type: "error",
+            title: "Storage error",
+            msg: `Could not save changes. ${e instanceof Error ? e.message : ""}`.trim()
+          });
+        }
       }
-    }
+    },
+    [backendMode, draftBody, draftTitle, notify, selectedNote]
+  );
 
-    try {
-      updateNote(noteIdAtStart, { title: titleAtStart, body: bodyAtStart });
-      setNotes(listNotes());
-
-      // Same "did draft change during save?" protection for local saves.
-      const stillSameDraft =
-        titleAtStart === draftTitle && bodyAtStart === draftBody && selectedNote?.id === noteIdAtStart;
-      if (stillSameDraft) setIsDirty(false);
-      setSaveStatus(stillSameDraft ? "saved" : "dirty");
-
-      if (!silent) notify({ type: "info", title: "Saved", msg: "Changes saved." });
-    } catch (e) {
-      setSaveStatus("dirty");
-      // If autosave fails silently, we still want a subtle signal. Keep it silent.
-      if (!silent) {
-        notify({
-          type: "error",
-          title: "Storage error",
-          msg: `Could not save changes. ${e instanceof Error ? e.message : ""}`.trim()
-        });
-      }
-    }
-  }
-
-  async function handleDelete() {
+  const handleDelete = useCallback(async () => {
     if (!selectedNote) return;
     const ok = window.confirm(`Delete "${selectedNote.title}"? This cannot be undone.`);
     if (!ok) return;
 
+    lastFocusRef.current = document.activeElement;
+
+    const deletedId = selectedNote.id;
+
     if (backendMode) {
       try {
-        await backendFetchJson(`/notes/${encodeURIComponent(selectedNote.id)}`, { method: "DELETE" });
-        setNotes((prev) => prev.filter((n) => n.id !== selectedNote.id));
+        await backendFetchJson(`/notes/${encodeURIComponent(deletedId)}`, { method: "DELETE" });
+        setNotes((prev) => prev.filter((n) => n.id !== deletedId));
         notify({ type: "info", title: "Deleted", msg: "Note deleted (backend)." });
+
+        // Move focus somewhere sensible after delete.
+        window.setTimeout(() => {
+          focusSearch();
+        }, 0);
+
         return;
       } catch {
         setBackendMode(false);
@@ -380,8 +424,15 @@ function App() {
     }
 
     try {
-      deleteNote(selectedNote.id);
-      setNotes(listNotes());
+      deleteNote(deletedId);
+      const nextNotes = listNotes();
+      setNotes(nextNotes);
+
+      window.setTimeout(() => {
+        // Prefer focusing search; list selection already updates.
+        focusSearch();
+      }, 0);
+
       notify({ type: "info", title: "Deleted", msg: "Note deleted." });
     } catch (e) {
       notify({
@@ -390,7 +441,7 @@ function App() {
         msg: `Could not delete note. ${e instanceof Error ? e.message : ""}`.trim()
       });
     }
-  }
+  }, [backendMode, focusSearch, notify, selectedNote]);
 
   async function handleResetAllNotes() {
     if (backendMode) {
@@ -527,10 +578,14 @@ function App() {
             onCreate={handleCreate}
             onSave={handleSave}
             onDelete={handleDelete}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={() => {
+              lastFocusRef.current = document.activeElement;
+              setSettingsOpen(true);
+            }}
             canSave={Boolean(selectedNote) && isDirty}
             canDelete={Boolean(selectedNote)}
             saveStatus={Boolean(selectedNote) ? saveStatus : "hidden"}
+            searchInputRef={searchInputRef}
           />
 
           {activeNav === "about" ? (
@@ -589,7 +644,21 @@ function App() {
 
       <SettingsPanel
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => {
+          setSettingsOpen(false);
+          window.setTimeout(() => {
+            const el = lastFocusRef.current;
+            if (el && typeof el.focus === "function") {
+              try {
+                el.focus();
+                return;
+              } catch {
+                // ignore
+              }
+            }
+            focusSearch();
+          }, 0);
+        }}
         notesCount={notes.length}
         onResetAll={handleResetAllNotes}
         onExport={handleExportNotes}

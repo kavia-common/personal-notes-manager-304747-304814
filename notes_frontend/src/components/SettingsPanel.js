@@ -13,6 +13,7 @@ export function SettingsPanel({
 }) {
   /** This is a public function. */
   const titleId = useId();
+  const descId = useId();
   const fileInputId = useId();
   const dialogRef = useRef(null);
   const fileRef = useRef(null);
@@ -22,26 +23,75 @@ export function SettingsPanel({
   useEffect(() => {
     if (!open) return;
 
-    // Focus management: focus the dialog container when opened.
+    const previouslyFocused = document.activeElement;
+
+    // Focus management: focus first meaningful control when opened.
     const t = window.setTimeout(() => {
+      const first =
+        dialogRef.current?.querySelector?.(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ) || dialogRef.current;
       try {
-        dialogRef.current?.focus?.();
+        first?.focus?.();
       } catch {
         // ignore
       }
     }, 0);
 
-    // Escape key closes.
+    function getFocusable(container) {
+      if (!container) return [];
+      const nodes = Array.from(
+        container.querySelectorAll(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      );
+      return nodes.filter((n) => n && n.offsetParent !== null);
+    }
+
+    // Escape closes; Tab traps focus inside.
     // PUBLIC_INTERFACE
     function onKeyDown(e) {
-      /** Close modal on Escape. */
-      if (e.key === "Escape") onClose?.();
+      /** Modal key handler: Escape to close and Tab to trap focus. */
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose?.();
+        return;
+      }
+
+      if (e.key === "Tab") {
+        const focusables = getFocusable(dialogRef.current);
+        if (focusables.length === 0) return;
+
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement;
+
+        if (e.shiftKey) {
+          if (active === first || active === dialogRef.current) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (active === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
     }
+
     window.addEventListener("keydown", onKeyDown);
 
     return () => {
       window.clearTimeout(t);
       window.removeEventListener("keydown", onKeyDown);
+
+      // Restore focus if parent didn't already.
+      try {
+        previouslyFocused?.focus?.();
+      } catch {
+        // ignore
+      }
     };
   }, [open, onClose]);
 
@@ -99,6 +149,7 @@ export function SettingsPanel({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-describedby={descId}
         tabIndex={-1}
         ref={dialogRef}
       >
@@ -107,12 +158,12 @@ export function SettingsPanel({
             <div className="panelTitle" id={titleId}>
               Settings
             </div>
-            <div className="panelSub">
+            <div className="panelSub" id={descId}>
               Local notes tools · <span className="badge">{notesCount} notes</span>
             </div>
           </div>
 
-          <button type="button" className="btn btnGhost btnSmall" onClick={onClose}>
+          <button type="button" className="btn btnGhost btnSmall" onClick={onClose} aria-label="Close settings">
             Close
           </button>
         </div>

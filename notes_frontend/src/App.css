@@ -406,6 +406,18 @@ a {
   padding: 10px;
 }
 
+/* Lightweight fixed-height virtualization helpers */
+.virtualList {
+  position: relative;
+}
+
+.virtualSpacer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
 .noteItem {
   width: 100%;
   text-align: left;

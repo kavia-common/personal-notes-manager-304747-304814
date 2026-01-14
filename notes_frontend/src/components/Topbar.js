@@ -14,7 +14,8 @@ export function Topbar({
   onOpenSettings,
   canSave,
   canDelete,
-  saveStatus
+  saveStatus,
+  searchInputRef
 }) {
   /** This is a public function. */
 
@@ -32,9 +33,10 @@ export function Topbar({
 
   return (
     <header className="topbar surface" aria-label="Top bar">
-      <div className="searchRow">
+      <div className="searchRow" role="search" aria-label="Search">
         <input
           id="notes-search"
+          ref={searchInputRef}
           className="searchInput"
           type="search"
           placeholder="Search notes…"
@@ -61,11 +63,17 @@ export function Topbar({
           </span>
         )}
 
-        <button type="button" className="btn btnPrimary" onClick={onCreate}>
+        <button type="button" className="btn btnPrimary" onClick={onCreate} aria-label="Create a new note">
           <span aria-hidden="true">＋</span> Add note
         </button>
 
-        <button type="button" className="btn btnGhost" onClick={onOpenSettings} title="Settings">
+        <button
+          type="button"
+          className="btn btnGhost"
+          onClick={onOpenSettings}
+          title="Open settings"
+          aria-label="Open settings"
+        >
           Settings
         </button>
 
@@ -78,6 +86,7 @@ export function Topbar({
               disabled={!canSave}
               aria-disabled={!canSave}
               title={!canSave ? "No changes to save" : "Save changes"}
+              aria-label={!canSave ? "Save (disabled)" : "Save note"}
             >
               Save
             </button>
@@ -87,6 +96,7 @@ export function Topbar({
               onClick={onDelete}
               disabled={!canDelete}
               aria-disabled={!canDelete}
+              aria-label={!canDelete ? "Delete (disabled)" : "Delete note"}
             >
               Delete
             </button>
