@@ -299,6 +299,63 @@ a {
   color: var(--muted);
 }
 
+/* ---------- Save status ---------- */
+
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  background: rgba(17, 24, 39, 0.03);
+  color: var(--muted);
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(107, 114, 128, 0.7);
+  box-shadow: 0 0 0 3px rgba(107, 114, 128, 0.12);
+}
+
+.statusDirty {
+  color: #92400e;
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.25);
+}
+
+.statusDirty .statusDot {
+  background: var(--secondary);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+}
+
+.statusSaving {
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.10);
+  border-color: rgba(37, 99, 235, 0.20);
+}
+
+.statusSaving .statusDot {
+  background: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.statusSaved {
+  color: #065f46;
+  background: rgba(16, 185, 129, 0.10);
+  border-color: rgba(16, 185, 129, 0.22);
+}
+
+.statusSaved .statusDot {
+  background: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
+}
+
 /* ---------- Content Split ---------- */
 
 .contentGrid {

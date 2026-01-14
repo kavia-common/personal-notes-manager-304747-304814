@@ -14,10 +14,21 @@ export function Editor({
   isDirty,
   setIsDirty,
   onCreate,
-  onSave
+  onSave,
+  saveStatus
 }) {
   /** This is a public function. */
   const previewHtml = useMemo(() => renderMarkdownToHtml(draftBody), [draftBody]);
+
+  const statusLabel =
+    saveStatus === "dirty" ? "Unsaved" : saveStatus === "saving" ? "Saving…" : "Saved";
+
+  const statusClass =
+    saveStatus === "dirty"
+      ? "statusPill statusDirty"
+      : saveStatus === "saving"
+        ? "statusPill statusSaving"
+        : "statusPill statusSaved";
 
   return (
     <section className="panel surface editorWrap" aria-label="Note editor and preview">
@@ -34,12 +45,20 @@ export function Editor({
           <div className="panelHeader">
             <div>
               <div className="panelTitle">Editor</div>
-              <div className="panelSub">
-                Updated {formatShortDate(selectedNote.updatedAt)} •{" "}
-                {isDirty ? "Unsaved changes" : "All changes saved"}
-              </div>
+              <div className="panelSub">Updated {formatShortDate(selectedNote.updatedAt)}</div>
             </div>
             <div className="actions">
+              <span
+                className={statusClass}
+                role="status"
+                aria-live="polite"
+                aria-label={`Save status: ${statusLabel}`}
+                title="Autosave status"
+              >
+                <span className="statusDot" aria-hidden="true" />
+                {statusLabel}
+              </span>
+
               <span className="badge" title="Markdown enabled">
                 Markdown
               </span>

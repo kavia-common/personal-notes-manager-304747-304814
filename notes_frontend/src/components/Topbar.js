@@ -12,9 +12,23 @@ export function Topbar({
   onSave,
   onDelete,
   canSave,
-  canDelete
+  canDelete,
+  saveStatus
 }) {
   /** This is a public function. */
+
+  const showStatus = activeNav === "notes" && saveStatus && saveStatus !== "hidden";
+
+  const statusLabel =
+    saveStatus === "dirty" ? "Unsaved" : saveStatus === "saving" ? "Saving…" : "Saved";
+
+  const statusClass =
+    saveStatus === "dirty"
+      ? "statusPill statusDirty"
+      : saveStatus === "saving"
+        ? "statusPill statusSaving"
+        : "statusPill statusSaved";
+
   return (
     <header className="topbar surface" aria-label="Top bar">
       <div className="searchRow">
@@ -32,6 +46,19 @@ export function Topbar({
       </div>
 
       <div className="actions" aria-label="Actions">
+        {showStatus && (
+          <span
+            className={statusClass}
+            role="status"
+            aria-live="polite"
+            aria-label={`Save status: ${statusLabel}`}
+            title="Autosave status"
+          >
+            <span className="statusDot" aria-hidden="true" />
+            {statusLabel}
+          </span>
+        )}
+
         <button type="button" className="btn btnPrimary" onClick={onCreate}>
           <span aria-hidden="true">＋</span> Add note
         </button>

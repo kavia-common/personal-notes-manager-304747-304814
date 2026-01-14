@@ -33,7 +33,13 @@ function App() {
 
   const [draftTitle, setDraftTitle] = useState("");
   const [draftBody, setDraftBody] = useState("");
+
+  // Dirty state tracks whether current draft differs from the last loaded/saved note content.
   const [isDirty, setIsDirty] = useState(false);
+
+  // Save status shown in UI. Values: "hidden" | "saved" | "dirty" | "saving"
+  const [saveStatus, setSaveStatus] = useState("hidden");
+  const autosaveTimer = useRef(null);
 
   const [toast, setToast] = useState(null); // {type,title,msg}
   const toastTimer = useRef(null);
@@ -55,16 +61,20 @@ function App() {
   }, [notes, selectedId]);
 
   useEffect(() => {
-    // When selection changes, reset draft.
+    // When selection changes, reset draft and status.
+    if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
+
     if (!selectedNote) {
       setDraftTitle("");
       setDraftBody("");
       setIsDirty(false);
+      setSaveStatus("hidden");
       return;
     }
     setDraftTitle(selectedNote.title ?? "");
     setDraftBody(selectedNote.body ?? "");
     setIsDirty(false);
+    setSaveStatus("saved");
   }, [selectedNote?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -170,46 +180,88 @@ function App() {
     notify({ type: "info", title: "Created", msg: "New note created." });
   }
 
-  async function handleSave() {
+  // Debounced autosave: when dirty drafts change, schedule a save after a short pause.
+  useEffect(() => {
+    if (!selectedNote) return;
+    if (!isDirty) return;
+
+    // Mark dirty immediately for UI responsiveness.
+    setSaveStatus("dirty");
+
+    if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
+
+    autosaveTimer.current = window.setTimeout(() => {
+      // Do not await to keep typing responsive; handleSave will update status.
+      handleSave({ silent: true });
+    }, 800);
+
+    return () => {
+      if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
+    };
+    // We intentionally watch the draft values so autosave triggers on edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftTitle, draftBody, isDirty, selectedNote?.id]);
+
+  async function handleSave(options = {}) {
     if (!selectedNote) return;
 
-    const title = draftTitle;
-    const body = draftBody;
+    const { silent = false } = options;
+
+    // Capture the note id and the draft snapshot at the moment save begins.
+    const noteIdAtStart = selectedNote.id;
+    const titleAtStart = draftTitle;
+    const bodyAtStart = draftBody;
+
+    // If an autosave is about to run, cancel that timer; manual save should win.
+    if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
+
+    setSaveStatus("saving");
 
     if (backendMode) {
       try {
-        const updated = await backendFetchJson(`/notes/${encodeURIComponent(selectedNote.id)}`, {
+        const updated = await backendFetchJson(`/notes/${encodeURIComponent(noteIdAtStart)}`, {
           method: "PUT",
-          body: JSON.stringify({ title, body })
+          body: JSON.stringify({ title: titleAtStart, body: bodyAtStart })
         });
 
         const nextNote = {
-          id: String(updated.id ?? selectedNote.id),
-          title: String(updated.title ?? title ?? "Untitled note"),
-          body: String(updated.body ?? body ?? ""),
+          id: String(updated.id ?? noteIdAtStart),
+          title: String(updated.title ?? titleAtStart ?? "Untitled note"),
+          body: String(updated.body ?? bodyAtStart ?? ""),
           createdAt: String(updated.createdAt ?? selectedNote.createdAt ?? new Date().toISOString()),
           updatedAt: String(updated.updatedAt ?? new Date().toISOString())
         };
 
         setNotes((prev) =>
-          [nextNote, ...prev.filter((n) => n.id !== selectedNote.id)].sort((a, b) =>
+          [nextNote, ...prev.filter((n) => n.id !== noteIdAtStart)].sort((a, b) =>
             String(b.updatedAt).localeCompare(String(a.updatedAt))
           )
         );
-        setIsDirty(false);
-        notify({ type: "info", title: "Saved", msg: "Changes saved (backend)." });
+
+        // Avoid clearing dirty state if the user typed more while we were saving.
+        const stillSameDraft = titleAtStart === draftTitle && bodyAtStart === draftBody && selectedNote?.id === noteIdAtStart;
+        if (stillSameDraft) setIsDirty(false);
+
+        setSaveStatus(stillSameDraft ? "saved" : "dirty");
+
+        if (!silent) notify({ type: "info", title: "Saved", msg: "Changes saved (backend)." });
         return;
       } catch {
         setBackendMode(false);
         setBackendStatus("Local mode (backend unavailable)");
-        notify({ type: "error", title: "Backend unavailable", msg: "Saving locally instead." });
+        if (!silent) notify({ type: "error", title: "Backend unavailable", msg: "Saving locally instead." });
       }
     }
 
-    updateNote(selectedNote.id, { title, body });
+    updateNote(noteIdAtStart, { title: titleAtStart, body: bodyAtStart });
     setNotes(listNotes());
-    setIsDirty(false);
-    notify({ type: "info", title: "Saved", msg: "Changes saved." });
+
+    // Same "did draft change during save?" protection for local saves.
+    const stillSameDraft = titleAtStart === draftTitle && bodyAtStart === draftBody && selectedNote?.id === noteIdAtStart;
+    if (stillSameDraft) setIsDirty(false);
+    setSaveStatus(stillSameDraft ? "saved" : "dirty");
+
+    if (!silent) notify({ type: "info", title: "Saved", msg: "Changes saved." });
   }
 
   async function handleDelete() {
@@ -257,6 +309,7 @@ function App() {
             onDelete={handleDelete}
             canSave={Boolean(selectedNote) && isDirty}
             canDelete={Boolean(selectedNote)}
+            saveStatus={Boolean(selectedNote) ? saveStatus : "hidden"}
           />
 
           {activeNav === "about" ? (
@@ -289,6 +342,7 @@ function App() {
                 setDraftBody={setDraftBody}
                 isDirty={isDirty}
                 setIsDirty={setIsDirty}
+                saveStatus={saveStatus}
                 onCreate={handleCreate}
                 onSave={handleSave}
               />
