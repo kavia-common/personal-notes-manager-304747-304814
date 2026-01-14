@@ -1,44 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import { hasBackendConfigured, getApiBaseUrl } from "./env";
+import { getEnv } from "./env";
 import {
+  createNote as createLocalNote,
   clearAllNotes,
-  createNote,
-  deleteNote,
   exportNotesData,
-  listNotes,
+  listNotes as listLocalNotes,
   replaceAllNotes,
-  searchNotes,
-  updateNote
+  updateNote as notesStoreUpdateFallback
 } from "./notesStore";
+import { createNote, deleteNote, getServiceInfo, listNotes, updateNote } from "./dataService";
 import { Editor, NotesList, SettingsPanel, Sidebar, Toast, Topbar } from "./components";
-
-/**
- * Minimal backend adapter (not fully implemented since backend spec is not provided).
- * If REACT_APP_API_BASE or REACT_APP_BACKEND_URL is configured, we will attempt to load notes.
- * If calls fail, we fall back to local storage/in-memory experience.
- */
-async function backendFetchJson(path, options) {
-  const base = getApiBaseUrl();
-  const url = `${base.replace(/\/$/, "")}${path}`;
-  const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) },
-    ...options
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Backend request failed (${res.status}): ${body || res.statusText}`);
-  }
-  return res.json();
-}
 
 // PUBLIC_INTERFACE
 function App() {
   /** This is a public function. */
   const [activeNav, setActiveNav] = useState("notes");
   const [query, setQuery] = useState("");
-  const [notes, setNotes] = useState(() => listNotes());
-  const [selectedId, setSelectedId] = useState(notes[0]?.id ?? null);
+
+  const serviceInfo = useMemo(() => getServiceInfo(), []);
+  const [notes, setNotes] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
 
   const [draftTitle, setDraftTitle] = useState("");
   const [draftBody, setDraftBody] = useState("");
@@ -53,9 +35,12 @@ function App() {
   const [toast, setToast] = useState(null); // {type,title,msg}
   const toastTimer = useRef(null);
 
-  const [backendMode, setBackendMode] = useState(hasBackendConfigured());
+  // "backendMode" is now derived from selected service:
+  // - HTTP service when REACT_APP_API_BASE is configured
+  // - local service otherwise
+  const [backendMode, setBackendMode] = useState(serviceInfo.kind === "http");
   const [backendStatus, setBackendStatus] = useState(
-    backendMode ? "Backend configured (best-effort)" : "Local mode"
+    serviceInfo.kind === "http" ? `Backend via REACT_APP_API_BASE (${getEnv("REACT_APP_API_BASE")})` : "Local mode"
   );
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -66,8 +51,16 @@ function App() {
 
   const selectedNote = useMemo(() => notes.find((n) => n.id === selectedId) ?? null, [notes, selectedId]);
 
-  // Note: searchNotes() reads from localStorage via listNotes(). We keep this behavior intact.
-  const filteredNotes = useMemo(() => searchNotes(query), [query, notes]);
+  // Search should operate on the in-memory notes list (works for both HTTP and local service modes).
+  const filteredNotes = useMemo(() => {
+    const q = String(query ?? "").trim().toLowerCase();
+    if (!q) return notes;
+    return notes.filter((n) => {
+      const t = String(n.title ?? "").toLowerCase();
+      const b = String(n.body ?? "").toLowerCase();
+      return t.includes(q) || b.includes(q);
+    });
+  }, [query, notes]);
 
   useEffect(() => {
     // Keep selection valid when notes list changes
@@ -93,50 +86,36 @@ function App() {
   }, [selectedNote?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    // Best-effort backend load if configured. If it fails, stay in local mode.
     let cancelled = false;
 
-    async function load() {
-      if (!hasBackendConfigured()) return;
-
+    async function loadInitial() {
       try {
-        // Because backend spec is unknown, we attempt a conventional route.
-        // If this fails, we simply use local notes.
-        const data = await backendFetchJson("/notes", { method: "GET" });
+        const data = await listNotes();
         if (cancelled) return;
-
-        if (Array.isArray(data)) {
-          // Expecting an array of notes shaped like {id,title,body,createdAt,updatedAt}
-          setNotes(
-            data
-              .map((n) => ({
-                id: String(n.id ?? ""),
-                title: String(n.title ?? "Untitled note"),
-                body: String(n.body ?? ""),
-                createdAt: String(n.createdAt ?? new Date().toISOString()),
-                updatedAt: String(n.updatedAt ?? n.createdAt ?? new Date().toISOString())
-              }))
-              .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
-          );
-          setBackendMode(true);
-          setBackendStatus("Connected to backend");
-          notify({ type: "info", title: "Backend", msg: "Loaded notes from configured backend." });
-        } else {
-          throw new Error("Unexpected backend response for /notes");
-        }
+        setNotes(data);
+        setSelectedId(data[0]?.id ?? null);
       } catch (e) {
         if (cancelled) return;
-        setBackendMode(false);
-        setBackendStatus("Local mode (backend unavailable)");
+
+        // If HTTP mode fails at runtime, we keep the UI usable by falling back to the local store in-memory view.
+        // Note: the service selection itself is static (chosen at module init time), so we show a clear message.
+        const msg = e instanceof Error ? e.message : String(e);
         notify({
           type: "error",
-          title: "Backend unavailable",
-          msg: "Falling back to local notes so the UI remains usable."
+          title: "Notes load failed",
+          msg: msg || "Could not load notes."
         });
+
+        // Fallback behavior: use local list (existing behavior) so the app remains functional.
+        const local = listLocalNotes();
+        setNotes(local);
+        setSelectedId(local[0]?.id ?? null);
+        setBackendMode(false);
+        setBackendStatus("Local mode (fallback after HTTP error)");
       }
     }
 
-    load();
+    loadInitial();
     return () => {
       cancelled = true;
     };
@@ -244,55 +223,42 @@ function App() {
     // Track the currently focused element so we can return focus to something sensible if needed.
     lastFocusRef.current = document.activeElement;
 
-    if (backendMode) {
-      // Best-effort: attempt backend create.
-      try {
-        const created = await backendFetchJson("/notes", {
-          method: "POST",
-          body: JSON.stringify({ title: "Untitled note", body: "" })
-        });
-        const note = {
-          id: String(created.id ?? ""),
-          title: String(created.title ?? "Untitled note"),
-          body: String(created.body ?? ""),
-          createdAt: String(created.createdAt ?? new Date().toISOString()),
-          updatedAt: String(created.updatedAt ?? created.createdAt ?? new Date().toISOString())
-        };
-        setNotes((prev) => [note, ...prev]);
-        setSelectedId(note.id);
-
-        // Focus editor title after creating.
-        window.setTimeout(() => {
-          document.querySelector('input[aria-label="Note title"]')?.focus?.();
-        }, 0);
-
-        notify({ type: "info", title: "Created", msg: "New note created (backend)." });
-        return;
-      } catch {
-        setBackendMode(false);
-        setBackendStatus("Local mode (backend unavailable)");
-        notify({ type: "error", title: "Backend unavailable", msg: "Creating note locally instead." });
-      }
-    }
-
     try {
-      const note = createNote({ title: "Untitled note", body: "" });
-      setNotes(listNotes());
+      const note = await createNote({ title: "Untitled note", body: "" });
+      setNotes((prev) => [note, ...prev].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))));
       setSelectedId(note.id);
 
       window.setTimeout(() => {
         document.querySelector('input[aria-label="Note title"]')?.focus?.();
       }, 0);
 
-      notify({ type: "info", title: "Created", msg: "New note created." });
-    } catch (e) {
       notify({
-        type: "error",
-        title: "Storage error",
-        msg: `Could not create note. ${e instanceof Error ? e.message : ""}`.trim()
+        type: "info",
+        title: "Created",
+        msg: backendMode ? "New note created (backend)." : "New note created."
       });
+    } catch (e) {
+      // Fallback to local create if HTTP fails at runtime.
+      try {
+        const note = createLocalNote({ title: "Untitled note", body: "" });
+        setNotes(listLocalNotes());
+        setSelectedId(note.id);
+        setBackendMode(false);
+        setBackendStatus("Local mode (fallback after HTTP error)");
+        notify({
+          type: "error",
+          title: "Backend error",
+          msg: `Creating note locally instead. ${e instanceof Error ? e.message : ""}`.trim()
+        });
+      } catch (localErr) {
+        notify({
+          type: "error",
+          title: "Create failed",
+          msg: `${e instanceof Error ? e.message : String(e)} ${localErr instanceof Error ? localErr.message : ""}`.trim()
+        });
+      }
     }
-  }, [backendMode, isDirty, notify, notes]);
+  }, [backendMode, isDirty]);
 
   // Debounced autosave: when dirty drafts change, schedule a save after a short pause.
   useEffect(() => {
@@ -332,67 +298,65 @@ function App() {
 
       setSaveStatus("saving");
 
-      if (backendMode) {
-        try {
-          const updated = await backendFetchJson(`/notes/${encodeURIComponent(noteIdAtStart)}`, {
-            method: "PUT",
-            body: JSON.stringify({ title: titleAtStart, body: bodyAtStart })
-          });
-
-          const nextNote = {
-            id: String(updated.id ?? noteIdAtStart),
-            title: String(updated.title ?? titleAtStart ?? "Untitled note"),
-            body: String(updated.body ?? bodyAtStart ?? ""),
-            createdAt: String(updated.createdAt ?? selectedNote.createdAt ?? new Date().toISOString()),
-            updatedAt: String(updated.updatedAt ?? new Date().toISOString())
-          };
-
-          setNotes((prev) =>
-            [nextNote, ...prev.filter((n) => n.id !== noteIdAtStart)].sort((a, b) =>
-              String(b.updatedAt).localeCompare(String(a.updatedAt))
-            )
-          );
-
-          // Avoid clearing dirty state if the user typed more while we were saving.
-          const stillSameDraft =
-            titleAtStart === draftTitle && bodyAtStart === draftBody && selectedNote?.id === noteIdAtStart;
-          if (stillSameDraft) setIsDirty(false);
-
-          setSaveStatus(stillSameDraft ? "saved" : "dirty");
-
-          if (!silent) notify({ type: "info", title: "Saved", msg: "Changes saved (backend)." });
-          return;
-        } catch {
-          setBackendMode(false);
-          setBackendStatus("Local mode (backend unavailable)");
-          if (!silent) notify({ type: "error", title: "Backend unavailable", msg: "Saving locally instead." });
-        }
-      }
-
       try {
-        updateNote(noteIdAtStart, { title: titleAtStart, body: bodyAtStart });
-        setNotes(listNotes());
+        const nextNote = await updateNote(noteIdAtStart, { title: titleAtStart, body: bodyAtStart });
 
-        // Same "did draft change during save?" protection for local saves.
+        setNotes((prev) =>
+          [nextNote, ...prev.filter((n) => n.id !== noteIdAtStart)].sort((a, b) =>
+            String(b.updatedAt).localeCompare(String(a.updatedAt))
+          )
+        );
+
+        // Avoid clearing dirty state if the user typed more while we were saving.
         const stillSameDraft =
           titleAtStart === draftTitle && bodyAtStart === draftBody && selectedNote?.id === noteIdAtStart;
         if (stillSameDraft) setIsDirty(false);
+
         setSaveStatus(stillSameDraft ? "saved" : "dirty");
 
-        if (!silent) notify({ type: "info", title: "Saved", msg: "Changes saved." });
-      } catch (e) {
-        setSaveStatus("dirty");
-        // If autosave fails silently, we still want a subtle signal. Keep it silent.
         if (!silent) {
           notify({
-            type: "error",
-            title: "Storage error",
-            msg: `Could not save changes. ${e instanceof Error ? e.message : ""}`.trim()
+            type: "info",
+            title: "Saved",
+            msg: backendMode ? "Changes saved (backend)." : "Changes saved."
           });
+        }
+      } catch (e) {
+        // Fallback to local update if HTTP fails at runtime.
+        try {
+          const updated = notesStoreUpdateFallback(noteIdAtStart, { title: titleAtStart, body: bodyAtStart });
+          setNotes(listLocalNotes());
+          setBackendMode(false);
+          setBackendStatus("Local mode (fallback after HTTP error)");
+
+          const stillSameDraft =
+            titleAtStart === draftTitle && bodyAtStart === draftBody && selectedNote?.id === noteIdAtStart;
+          if (stillSameDraft) setIsDirty(false);
+          setSaveStatus(stillSameDraft ? "saved" : "dirty");
+
+          if (!silent) {
+            notify({
+              type: "error",
+              title: "Backend error",
+              msg: `Saved locally instead. ${e instanceof Error ? e.message : ""}`.trim()
+            });
+          }
+
+          // Keep lint happy about updated variable (not required by UI, but useful if debugging).
+          void updated;
+        } catch (localErr) {
+          setSaveStatus("dirty");
+          if (!silent) {
+            notify({
+              type: "error",
+              title: "Save failed",
+              msg: `${e instanceof Error ? e.message : String(e)} ${localErr instanceof Error ? localErr.message : ""}`.trim()
+            });
+          }
         }
       }
     },
-    [backendMode, draftBody, draftTitle, notify, selectedNote]
+    [backendMode, draftBody, draftTitle, selectedNote]
   );
 
   const handleDelete = useCallback(async () => {
@@ -404,44 +368,44 @@ function App() {
 
     const deletedId = selectedNote.id;
 
-    if (backendMode) {
-      try {
-        await backendFetchJson(`/notes/${encodeURIComponent(deletedId)}`, { method: "DELETE" });
-        setNotes((prev) => prev.filter((n) => n.id !== deletedId));
-        notify({ type: "info", title: "Deleted", msg: "Note deleted (backend)." });
+    try {
+      await deleteNote(deletedId);
+      setNotes((prev) => prev.filter((n) => n.id !== deletedId));
+      notify({
+        type: "info",
+        title: "Deleted",
+        msg: backendMode ? "Note deleted (backend)." : "Note deleted."
+      });
 
-        // Move focus somewhere sensible after delete.
+      window.setTimeout(() => {
+        focusSearch();
+      }, 0);
+    } catch (e) {
+      // Fallback to local delete if HTTP fails at runtime.
+      try {
+        const { deleteNote: deleteLocal } = await import("./notesStore");
+        deleteLocal(deletedId);
+        setNotes(listLocalNotes());
+        setBackendMode(false);
+        setBackendStatus("Local mode (fallback after HTTP error)");
+        notify({
+          type: "error",
+          title: "Backend error",
+          msg: `Deleted locally instead. ${e instanceof Error ? e.message : ""}`.trim()
+        });
+
         window.setTimeout(() => {
           focusSearch();
         }, 0);
-
-        return;
-      } catch {
-        setBackendMode(false);
-        setBackendStatus("Local mode (backend unavailable)");
-        notify({ type: "error", title: "Backend unavailable", msg: "Deleting locally instead." });
+      } catch (localErr) {
+        notify({
+          type: "error",
+          title: "Delete failed",
+          msg: `${e instanceof Error ? e.message : String(e)} ${localErr instanceof Error ? localErr.message : ""}`.trim()
+        });
       }
     }
-
-    try {
-      deleteNote(deletedId);
-      const nextNotes = listNotes();
-      setNotes(nextNotes);
-
-      window.setTimeout(() => {
-        // Prefer focusing search; list selection already updates.
-        focusSearch();
-      }, 0);
-
-      notify({ type: "info", title: "Deleted", msg: "Note deleted." });
-    } catch (e) {
-      notify({
-        type: "error",
-        title: "Storage error",
-        msg: `Could not delete note. ${e instanceof Error ? e.message : ""}`.trim()
-      });
-    }
-  }, [backendMode, focusSearch, notify, selectedNote]);
+  }, [backendMode, focusSearch, selectedNote]);
 
   async function handleResetAllNotes() {
     if (backendMode) {
@@ -462,7 +426,7 @@ function App() {
 
     try {
       clearAllNotes();
-      const fresh = listNotes(); // will re-seed defaults if storage is empty
+      const fresh = listLocalNotes(); // will re-seed defaults if storage is empty
       setNotes(fresh);
       setSelectedId(fresh[0]?.id ?? null);
       setDraftTitle("");
@@ -541,7 +505,7 @@ function App() {
 
       const next = replaceAllNotes(notesArray);
 
-      setNotes(listNotes());
+      setNotes(listLocalNotes());
       setSelectedId(next[0]?.id ?? null);
       setDraftTitle("");
       setDraftBody("");
