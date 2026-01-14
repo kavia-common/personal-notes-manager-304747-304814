@@ -53,8 +53,10 @@ function loadAll() {
 function saveAll(notes) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
-  } catch {
-    // Ignore storage errors (e.g., private mode).
+    return { ok: true };
+  } catch (e) {
+    // Surface storage errors (e.g., quota exceeded, blocked storage) so the UI can notify.
+    return { ok: false, error: e instanceof Error ? e : new Error("Storage write failed") };
   }
 }
 
@@ -73,7 +75,8 @@ export function createNote({ title, body }) {
     updatedAt: t
   };
   const next = [note, ...notes];
-  saveAll(next);
+  const res = saveAll(next);
+  if (!res.ok) throw res.error;
   return note;
 }
 
@@ -107,7 +110,8 @@ export function updateNote(id, patch) {
 
   const next = [...notes];
   next[idx] = updated;
-  saveAll(next);
+  const res = saveAll(next);
+  if (!res.ok) throw res.error;
   return updated;
 }
 
@@ -119,7 +123,8 @@ export function deleteNote(id) {
   const notes = loadAll();
   const next = notes.filter(n => n.id !== id);
   if (next.length === notes.length) return false;
-  saveAll(next);
+  const res = saveAll(next);
+  if (!res.ok) throw res.error;
   return true;
 }
 

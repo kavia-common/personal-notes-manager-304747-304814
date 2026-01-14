@@ -27,8 +27,12 @@ export function NotesList({
       <div className="listScroll" role="list" aria-label="Notes">
         {filteredNotes.length === 0 ? (
           <div className="emptyState">
-            <div className="emptyTitle">No matches</div>
-            <div className="emptyText">Try a different search, or create a new note.</div>
+            <div className="emptyTitle">{notesCount === 0 ? "No notes yet" : "No matches"}</div>
+            <div className="emptyText">
+              {notesCount === 0
+                ? "Create your first note to start writing."
+                : "Try a different search, or create a new note."}
+            </div>
             <button type="button" className="btn btnPrimary btnSmall" onClick={onCreate}>
               <span aria-hidden="true">＋</span> Add note
             </button>

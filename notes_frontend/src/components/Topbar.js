@@ -33,6 +33,7 @@ export function Topbar({
     <header className="topbar surface" aria-label="Top bar">
       <div className="searchRow">
         <input
+          id="notes-search"
           className="searchInput"
           type="search"
           placeholder="Search notes…"

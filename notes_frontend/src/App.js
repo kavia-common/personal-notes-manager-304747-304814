@@ -134,6 +134,71 @@ function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 3200);
   }
 
+  // Keyboard shortcuts:
+  // - Ctrl/Cmd+N: New note
+  // - Ctrl/Cmd+S: Save (prevents browser "Save page" dialog)
+  // - Ctrl/Cmd+F: Focus search input (prevents browser find dialog)
+  useEffect(() => {
+    function isTypingInField(target) {
+      const el = target;
+      if (!el) return false;
+      const tag = String(el.tagName || "").toLowerCase();
+      return tag === "input" || tag === "textarea" || el.isContentEditable;
+    }
+
+    // PUBLIC_INTERFACE
+    function onKeyDown(e) {
+      /** Global key handler for notes app shortcuts. */
+      const key = String(e.key || "").toLowerCase();
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+
+      // Ctrl/Cmd+S: Save current note
+      if (key === "s") {
+        e.preventDefault();
+        if (!selectedNote) {
+          notify({ type: "info", title: "Nothing to save", msg: "Create or select a note first." });
+          return;
+        }
+        if (!isDirty) {
+          // Keep this subtle; user explicitly invoked save so a tiny toast is okay.
+          notify({ type: "info", title: "Up to date", msg: "No changes to save." });
+          return;
+        }
+        handleSave({ silent: false });
+        return;
+      }
+
+      // Ctrl/Cmd+N: New note
+      if (key === "n") {
+        e.preventDefault();
+        handleCreate();
+        return;
+      }
+
+      // Ctrl/Cmd+F: Focus search
+      if (key === "f") {
+        // If the user is already typing in an input/textarea, don't steal focus.
+        if (isTypingInField(e.target)) return;
+
+        e.preventDefault();
+        const search = document.getElementById("notes-search");
+        if (search) {
+          search.focus();
+          try {
+            search.select?.();
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // Depend on current state so shortcuts behave with latest selection/dirty state.
+  }, [selectedNote, isDirty, handleCreate, handleSave]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function selectNote(id) {
     if (isDirty) {
       const ok = window.confirm("You have unsaved changes. Discard them and switch notes?");
@@ -174,10 +239,18 @@ function App() {
       }
     }
 
-    const note = createNote({ title: "Untitled note", body: "" });
-    setNotes(listNotes());
-    setSelectedId(note.id);
-    notify({ type: "info", title: "Created", msg: "New note created." });
+    try {
+      const note = createNote({ title: "Untitled note", body: "" });
+      setNotes(listNotes());
+      setSelectedId(note.id);
+      notify({ type: "info", title: "Created", msg: "New note created." });
+    } catch (e) {
+      notify({
+        type: "error",
+        title: "Storage error",
+        msg: `Could not create note. ${e instanceof Error ? e.message : ""}`.trim()
+      });
+    }
   }
 
   // Debounced autosave: when dirty drafts change, schedule a save after a short pause.
@@ -253,15 +326,28 @@ function App() {
       }
     }
 
-    updateNote(noteIdAtStart, { title: titleAtStart, body: bodyAtStart });
-    setNotes(listNotes());
+    try {
+      updateNote(noteIdAtStart, { title: titleAtStart, body: bodyAtStart });
+      setNotes(listNotes());
 
-    // Same "did draft change during save?" protection for local saves.
-    const stillSameDraft = titleAtStart === draftTitle && bodyAtStart === draftBody && selectedNote?.id === noteIdAtStart;
-    if (stillSameDraft) setIsDirty(false);
-    setSaveStatus(stillSameDraft ? "saved" : "dirty");
+      // Same "did draft change during save?" protection for local saves.
+      const stillSameDraft =
+        titleAtStart === draftTitle && bodyAtStart === draftBody && selectedNote?.id === noteIdAtStart;
+      if (stillSameDraft) setIsDirty(false);
+      setSaveStatus(stillSameDraft ? "saved" : "dirty");
 
-    if (!silent) notify({ type: "info", title: "Saved", msg: "Changes saved." });
+      if (!silent) notify({ type: "info", title: "Saved", msg: "Changes saved." });
+    } catch (e) {
+      setSaveStatus("dirty");
+      // If autosave fails silently, we still want a subtle signal. Keep it silent.
+      if (!silent) {
+        notify({
+          type: "error",
+          title: "Storage error",
+          msg: `Could not save changes. ${e instanceof Error ? e.message : ""}`.trim()
+        });
+      }
+    }
   }
 
   async function handleDelete() {
@@ -282,9 +368,17 @@ function App() {
       }
     }
 
-    deleteNote(selectedNote.id);
-    setNotes(listNotes());
-    notify({ type: "info", title: "Deleted", msg: "Note deleted." });
+    try {
+      deleteNote(selectedNote.id);
+      setNotes(listNotes());
+      notify({ type: "info", title: "Deleted", msg: "Note deleted." });
+    } catch (e) {
+      notify({
+        type: "error",
+        title: "Storage error",
+        msg: `Could not delete note. ${e instanceof Error ? e.message : ""}`.trim()
+      });
+    }
   }
 
   return (
