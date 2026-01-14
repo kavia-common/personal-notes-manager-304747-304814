@@ -616,3 +616,99 @@ a {
   color: var(--muted);
   line-height: 1.4;
 }
+
+/* ---------- Modal (Settings) ---------- */
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.35);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  z-index: 60;
+}
+
+.modalCard {
+  width: min(820px, 100%);
+  max-height: min(80vh, 760px);
+  overflow: auto;
+  border-radius: calc(var(--radius) + 2px);
+  box-shadow: 0 24px 60px rgba(17, 24, 39, 0.22);
+}
+
+.modalHeader {
+  padding: 14px 14px 12px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.modalBody {
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.settingsGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.settingsRow {
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.04), transparent 60%), var(--surface);
+  border-radius: 14px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .settingsRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+.settingsInfo {
+  display: grid;
+  gap: 4px;
+}
+
+.settingsTitle {
+  font-weight: 900;
+  font-size: 13px;
+}
+
+.settingsText {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.settingsActions {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.fileInput {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.btnDisabled {
+  opacity: 0.6;
+  pointer-events: none;
+}

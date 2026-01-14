@@ -1,8 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { hasBackendConfigured, getApiBaseUrl } from "./env";
-import { createNote, deleteNote, listNotes, searchNotes, updateNote } from "./notesStore";
-import { Editor, NotesList, Sidebar, Toast, Topbar } from "./components";
+import {
+  clearAllNotes,
+  createNote,
+  deleteNote,
+  exportNotesData,
+  listNotes,
+  replaceAllNotes,
+  searchNotes,
+  updateNote
+} from "./notesStore";
+import { Editor, NotesList, SettingsPanel, Sidebar, Toast, Topbar } from "./components";
 
 /**
  * Minimal backend adapter (not fully implemented since backend spec is not provided).
@@ -48,6 +57,8 @@ function App() {
   const [backendStatus, setBackendStatus] = useState(
     backendMode ? "Backend configured (best-effort)" : "Local mode"
   );
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const selectedNote = useMemo(() => notes.find((n) => n.id === selectedId) ?? null, [notes, selectedId]);
 
@@ -381,6 +392,121 @@ function App() {
     }
   }
 
+  async function handleResetAllNotes() {
+    if (backendMode) {
+      notify({
+        type: "error",
+        title: "Local-only action",
+        msg: "Reset operates on local notes. Backend mode is enabled; disconnect backend to avoid confusion."
+      });
+      return;
+    }
+
+    if (isDirty) {
+      const ok = window.confirm(
+        "You have unsaved changes in the editor. Reset will discard them. Continue?"
+      );
+      if (!ok) return;
+    }
+
+    try {
+      clearAllNotes();
+      const fresh = listNotes(); // will re-seed defaults if storage is empty
+      setNotes(fresh);
+      setSelectedId(fresh[0]?.id ?? null);
+      setDraftTitle("");
+      setDraftBody("");
+      setIsDirty(false);
+      setSaveStatus("hidden");
+      notify({ type: "info", title: "Reset", msg: "Local notes were cleared." });
+    } catch (e) {
+      notify({
+        type: "error",
+        title: "Storage error",
+        msg: `Could not reset notes. ${e instanceof Error ? e.message : ""}`.trim()
+      });
+    }
+  }
+
+  async function handleExportNotes() {
+    if (backendMode) {
+      notify({
+        type: "error",
+        title: "Local-only action",
+        msg: "Export in this build exports local notes. Backend mode is enabled; exported file may not match backend state."
+      });
+      // Still allow export to proceed (best effort) since notes state exists in-memory.
+    }
+
+    try {
+      const data = exportNotesData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `personal-notes-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      URL.revokeObjectURL(url);
+      notify({ type: "info", title: "Exported", msg: "Downloaded notes JSON." });
+    } catch (e) {
+      notify({
+        type: "error",
+        title: "Export failed",
+        msg: `Could not export notes. ${e instanceof Error ? e.message : ""}`.trim()
+      });
+    }
+  }
+
+  async function handleImportNotesJsonText(jsonText) {
+    if (backendMode) {
+      notify({
+        type: "error",
+        title: "Local-only action",
+        msg: "Import replaces local notes. Backend mode is enabled; imported content will not be pushed to backend."
+      });
+      // Still allow local import, but warn user.
+    }
+
+    if (isDirty) {
+      const ok = window.confirm(
+        "You have unsaved changes in the editor. Import will replace notes and discard current draft. Continue?"
+      );
+      if (!ok) return;
+    }
+
+    try {
+      const parsed = JSON.parse(String(jsonText ?? ""));
+
+      // Support both raw array exports and a wrapped shape for future-proofing.
+      const notesArray = Array.isArray(parsed) ? parsed : parsed?.notes;
+
+      if (!Array.isArray(notesArray)) {
+        throw new Error('Invalid import file. Expected a JSON array of notes, or an object with a "notes" array.');
+      }
+
+      const next = replaceAllNotes(notesArray);
+
+      setNotes(listNotes());
+      setSelectedId(next[0]?.id ?? null);
+      setDraftTitle("");
+      setDraftBody("");
+      setIsDirty(false);
+      setSaveStatus("hidden");
+
+      notify({ type: "info", title: "Imported", msg: `Imported ${next.length} notes.` });
+    } catch (e) {
+      notify({
+        type: "error",
+        title: "Import failed",
+        msg: `Could not import notes. ${e instanceof Error ? e.message : ""}`.trim()
+      });
+    }
+  }
+
   return (
     <>
       <div className="app-shell" role="application" aria-label="Personal Notes">
@@ -401,6 +527,7 @@ function App() {
             onCreate={handleCreate}
             onSave={handleSave}
             onDelete={handleDelete}
+            onOpenSettings={() => setSettingsOpen(true)}
             canSave={Boolean(selectedNote) && isDirty}
             canDelete={Boolean(selectedNote)}
             saveStatus={Boolean(selectedNote) ? saveStatus : "hidden"}
@@ -416,6 +543,21 @@ function App() {
                   <code>REACT_APP_API_BASE</code> or <code>REACT_APP_BACKEND_URL</code> is configured.
                 </div>
                 <div className="emptyText">Markdown preview: type on the left and preview renders on the right.</div>
+                <button type="button" className="btn btnGhost btnSmall" onClick={() => setSettingsOpen(true)}>
+                  Open Settings
+                </button>
+              </div>
+            </section>
+          ) : activeNav === "settings" ? (
+            <section className="panel surface" aria-label="Settings">
+              <div className="emptyState">
+                <div className="emptyTitle">Settings</div>
+                <div className="emptyText">
+                  Manage local notes: export, import, or reset. Settings opens in a modal to avoid routing changes.
+                </div>
+                <button type="button" className="btn btnPrimary btnSmall" onClick={() => setSettingsOpen(true)}>
+                  Open Settings
+                </button>
               </div>
             </section>
           ) : (
@@ -444,6 +586,15 @@ function App() {
           )}
         </main>
       </div>
+
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        notesCount={notes.length}
+        onResetAll={handleResetAllNotes}
+        onExport={handleExportNotes}
+        onImportJsonText={handleImportNotesJsonText}
+      />
 
       <Toast toast={toast} />
     </>

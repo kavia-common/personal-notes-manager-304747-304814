@@ -3,3 +3,4 @@ export { Topbar } from "./Topbar";
 export { NotesList } from "./NotesList";
 export { Editor } from "./Editor";
 export { Toast } from "./Toast";
+export { SettingsPanel } from "./SettingsPanel";

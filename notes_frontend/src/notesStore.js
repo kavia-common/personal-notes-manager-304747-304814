@@ -104,6 +104,34 @@ function saveAll(notes) {
   }
 }
 
+function assertNotesArrayShape(value) {
+  if (!Array.isArray(value)) {
+    throw new Error("Invalid format: expected an array of notes.");
+  }
+
+  for (let i = 0; i < value.length; i += 1) {
+    const n = value[i];
+    if (!n || typeof n !== "object") throw new Error(`Invalid note at index ${i}: expected object.`);
+    // We allow missing fields because normalizeNote will fill them,
+    // but if present, they must be valid-ish types.
+    if (n.id !== undefined && typeof n.id !== "string" && typeof n.id !== "number") {
+      throw new Error(`Invalid note at index ${i}: id must be string/number.`);
+    }
+    if (n.title !== undefined && typeof n.title !== "string") {
+      throw new Error(`Invalid note at index ${i}: title must be a string.`);
+    }
+    if (n.body !== undefined && typeof n.body !== "string") {
+      throw new Error(`Invalid note at index ${i}: body must be a string.`);
+    }
+    if (n.createdAt !== undefined && typeof n.createdAt !== "string") {
+      throw new Error(`Invalid note at index ${i}: createdAt must be a string.`);
+    }
+    if (n.updatedAt !== undefined && typeof n.updatedAt !== "string") {
+      throw new Error(`Invalid note at index ${i}: updatedAt must be a string.`);
+    }
+  }
+}
+
 /** PUBLIC_INTERFACE
  * Creates a new note and returns it.
  */
@@ -151,8 +179,7 @@ export function updateNote(id, patch) {
   const updated = {
     ...current,
     ...(patch ?? {}),
-    title:
-      patch?.title !== undefined ? (patch.title ?? "").trim() || "Untitled note" : current.title,
+    title: patch?.title !== undefined ? (patch.title ?? "").trim() || "Untitled note" : current.title,
     body: patch?.body !== undefined ? patch.body ?? "" : current.body,
     createdAt: current.createdAt,
     updatedAt: nowIso()
@@ -200,7 +227,30 @@ export function clearAllNotes() {
   /** This is a public function. */
   try {
     localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // ignore
+  } catch (e) {
+    // Surface a meaningful error to callers so UI can toast.
+    throw e instanceof Error ? e : new Error("Storage remove failed");
   }
+}
+
+/** PUBLIC_INTERFACE
+ * Returns a plain JS array representing the notes suitable for JSON export.
+ */
+export function exportNotesData() {
+  /** This is a public function. */
+  // listNotes() already normalizes via loadAll()'s normalization pass.
+  return listNotes();
+}
+
+/** PUBLIC_INTERFACE
+ * Replaces the local notes storage with the provided notes array (normalized).
+ * Returns the normalized array that was stored.
+ */
+export function replaceAllNotes(notesArray) {
+  /** This is a public function. */
+  assertNotesArrayShape(notesArray);
+  const normalized = notesArray.map((n, i) => normalizeNote(n, i));
+  const res = saveAll(normalized);
+  if (!res.ok) throw res.error;
+  return normalized;
 }

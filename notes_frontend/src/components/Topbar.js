@@ -11,6 +11,7 @@ export function Topbar({
   onCreate,
   onSave,
   onDelete,
+  onOpenSettings,
   canSave,
   canDelete,
   saveStatus
@@ -62,6 +63,10 @@ export function Topbar({
 
         <button type="button" className="btn btnPrimary" onClick={onCreate}>
           <span aria-hidden="true">＋</span> Add note
+        </button>
+
+        <button type="button" className="btn btnGhost" onClick={onOpenSettings} title="Settings">
+          Settings
         </button>
 
         {activeNav === "notes" && (

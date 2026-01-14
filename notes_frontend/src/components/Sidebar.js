@@ -52,6 +52,18 @@ export function Sidebar({
             About
           </span>
         </button>
+
+        <button
+          type="button"
+          className={`navButton ${activeNav === "settings" ? "navButtonActive" : ""}`}
+          onClick={() => setActiveNav("settings")}
+          aria-current={activeNav === "settings" ? "page" : undefined}
+        >
+          <span className="navButtonLabel">
+            {iconBox("⚙")}
+            Settings
+          </span>
+        </button>
       </nav>
 
       <div className="sidebarFooter">
